@@ -1,0 +1,182 @@
+import time
+import board
+import busio
+import pwmio
+import json
+import rtc
+import math
+
+
+import adafruit_mpr121
+import neoPixelFunctions as neoFun
+import adafruit_vs1053
+import espFunctions as espFun
+from adafruit_motor import stepper
+import motorFunctions as motorFun
+
+# Configure PWM buzzer and other state:
+BUZZER_PIN = board.D9
+TONE_ON_DUTY = 2 ** 15  # Duty cycle of tone when turned on, a square wave.
+TONE_OFF_DUTY = 0  # Duty cycle of tone when turned off, 0 or no signal.
+###NOTE_FREQS = [
+###    261,  # Input 0 = 261 hz = middle C
+###    294,  # Input 1 = middle D
+###    329,  # Input 2 = middle E
+###    349,  # Input 3 = middle F
+###    392,  # Input 4 = middle G
+###    440,  # Input 5 = middle A
+###    493,  # Input 6 = middle B
+###    69,  # Input 7 = nothing (set to a frequency in hertz!)
+###    555,  # Input 8
+###    0,  # Input 9
+###    0,  # Input 10
+###    0,
+###]  # Input 11
+
+NOTE_FREAKS = [
+    52,
+    54,
+    56,
+    58,
+    60,
+    62,
+    64,
+    66,
+    68,
+    70,
+    72,
+    74]
+
+OFF_FREQS = [
+    (0, 52),
+    (0, 54),
+    (0, 56),
+    (0, 58),
+    (0, 60),
+    (0, 62),
+    (0, 64),
+    (0, 66),
+    (0, 68),
+    (0, 70),
+    (0, 72),
+    (0, 74)]
+
+Note_Colors = [
+    (30, 0, 0),
+    (0, 30, 0),
+    (0, 0, 30),
+    (30, 0, 30),
+    (30, 30, 0),
+    (0, 30, 30),
+    (30, 30, 30),
+    (15, 0, 40),
+    (0, 40, 15),
+    (15, 40, 0),
+    (0, 15, 40),
+    (40, 0, 15)]
+
+VS1053_BANK_DEFAULT = 0x00
+VS1053_BANK_DRUMS1 = 0x78
+VS1053_BANK_DRUMS2 = 0x7F
+VS1053_BANK_MELODY = 0x79
+MIDI_NOTE_ON = 0x90
+MIDI_NOTE_OFF = 0x80
+MIDI_CHAN_MSG = 0xB0
+MIDI_CHAN_BANK = 0x00
+MIDI_CHAN_VOLUME = 0x07
+MIDI_CHAN_PAN = 0x0A
+MIDI_CHAN_PROGRAM = 0xC0
+
+uart = busio.UART(board.TX, board.RX, baudrate=31250)
+
+
+def note_on(channel, note, vel):
+    uart.write(bytearray([MIDI_NOTE_ON | channel, note, vel]))
+
+
+def note_off(channel, note):
+    uart.write(bytearray([MIDI_NOTE_OFF | channel, note, 0]))
+
+
+def set_channel_bank(channel, bank):
+    uart.write(bytearray([MIDI_CHAN_MSG | channel, MIDI_CHAN_BANK, bank]))
+
+
+def set_channel_volume(channel, vol):
+    uart.write(bytearray([MIDI_CHAN_MSG | channel, MIDI_CHAN_VOLUME, vol]))
+
+
+def set_channel_instrument(channel, num):
+    uart.write(bytearray([MIDI_CHAN_PROGRAM | channel]))
+    time.sleep(0.01)
+    uart.write(bytearray([num]))
+    time.sleep(0.01)
+
+def set_channel_pan(channel, pan):
+    uart.write(bytearray([MIDI_CHAN_MSG | channel, MIDI_CHAN_PAN, pan]))
+
+# Create I2C bus.
+i2c = board.I2C()
+
+#Wifi and Thingspeak stuff
+NETWORK_NAME = "Rehema"
+NETWORK_PASS = "qazWSX11!!"
+THINGSPEAK_CHANNEL = 0                          #Enter Thingspeak Ch
+THINGSPEAK_API_KEY = '50MNJGIKQZHMN18Q'         #Enter Thingspeak API
+
+myMotor = ECEGMotor()
+
+myMotor.set_position_degrees(180)
+
+net_tool = espFun.ESP_Tools(NETWORK_NAME, NETWORK_PASS)
+
+myMotor.reset_position()
+
+# Set up a piano instrument on channel 0
+set_channel_bank(0, VS1053_BANK_MELODY)
+set_channel_volume(0, 127)
+set_channel_instrument(0, 0)
+
+
+# Play Do Re Mi
+note_on(0, 60, 127)
+time.sleep(0.5)
+note_off(0, 60)
+
+note_on(0, 62, 127)
+time.sleep(0.5)
+note_off(0, 62)
+
+note_on(0, 64, 127)
+time.sleep(0.5)
+note_off(0, 64)
+
+# Create MPR121 class.
+mpr121 = adafruit_mpr121.MPR121(i2c)
+# Note you can optionally change the address of the device:
+# mpr121 = adafruit_mpr121.MPR121(i2c, address=0x91)
+
+touched = mpr121.touched_pins
+last_note = None
+note = touched.index(False)
+
+while True:
+    # Get touched state for all pins
+    touched = mpr121.touched_pins
+    # If no pins are touched, be quiet
+    if True not in touched:
+        last_note = None
+        note_off(0, NOTE_FREAKS[note])
+        neoFun.set_ring_color((0, 0, 0))
+        continue
+    note = touched.index(True)
+    # Play note if pin is different and has a defined note
+    if note != last_note and NOTE_FREAKS[note] != 0:
+        last_note = note
+        note_on(0, NOTE_FREAKS[note], 127)
+        neoFun.set_ring_color(Note_Colors[note])
+        print("instrument: " + str(Note_Colors[note]))
+        request_msg = "https://api.thingspeak.com/update?api_key=50MNJGIKQZHMN18Q&field1=" + str(NOTE_FREAKS[note]).format('50MNJGIKQZHMN18Q','1',NOTE_FREAKS[note])
+        net_tool.api_get(request_msg)
+
+
