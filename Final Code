@@ -175,7 +175,6 @@ while True:
         last_note = note
         note_on(0, NOTE_FREAKS[note], 127)
         neoFun.set_ring_color(Note_Colors[note])
-        print("instrument: " + str(Note_Colors[note]))
         request_msg = "https://api.thingspeak.com/update?api_key=50MNJGIKQZHMN18Q&field1=" + str(NOTE_FREAKS[note]).format('50MNJGIKQZHMN18Q','1',NOTE_FREAKS[note])
         net_tool.api_get(request_msg)
 
